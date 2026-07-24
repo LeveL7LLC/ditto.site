@@ -1,4 +1,4 @@
-import { chromium, type Browser, type BrowserContext } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Response } from "playwright";
 import { join } from "node:path";
 import { collectPage, type PageSnapshot, type FontFace } from "./walker.js";
 import { tagElements, captureInteractions, type InteractionCapture } from "./interactions.js";
@@ -45,6 +45,14 @@ const DESKTOP_UA =
 const ESBUILD_SHIM =
   "globalThis.__name = globalThis.__name || ((fn) => fn);" +
   "globalThis.__defProp = globalThis.__defProp || Object.defineProperty;";
+
+function blockedAccessError(url: string, status: number | null, wallDetected: boolean): Error {
+  const signals: string[] = [];
+  if (status === 403 || status === 429) signals.push(`HTTP ${status}`);
+  if (wallDetected) signals.push("bot-protection page detected");
+  const suffix = signals.length ? ` (${signals.join(", ")})` : "";
+  return new Error(`target site is blocking automated access at ${url}${suffix} — refusing to clone`);
+}
 
 export type DiscoveredAsset = {
   url: string;
@@ -1331,16 +1339,17 @@ export async function captureSite(opts: {
     // structured error instead of tying up the pipeline. Attempt 0 waits for `load`;
     // later attempts fall back to `domcontentloaded` (a heavy page may never fire `load`).
     const NAV_BUDGET_MS = 90_000;
-    const navigateLoaded = async (pg: import("playwright").Page): Promise<void> => {
+    const navigateLoaded = async (pg: import("playwright").Page): Promise<Response | null> => {
       log({ event: "goto", url: opts.url });
       const navStart = Date.now();
       let navigated = false;
+      let response: Response | null = null;
       let navErr: unknown = null;
       for (let attempt = 0; attempt < 3 && !navigated; attempt++) {
         const remaining = NAV_BUDGET_MS - (Date.now() - navStart);
         if (remaining < 5_000) break; // not enough budget left for a meaningful attempt
         try {
-          await pg.goto(opts.url, {
+          response = await pg.goto(opts.url, {
             waitUntil: attempt === 0 ? "load" : "domcontentloaded",
             timeout: Math.min(attempt === 0 ? 45_000 : 20_000, remaining),
           });
@@ -1356,10 +1365,12 @@ export async function captureSite(opts: {
         );
       }
       await settle(pg);
+      return response;
     };
 
+    let entryResponse: Response | null = null;
     try {
-      await navigateLoaded(page);
+      entryResponse = await navigateLoaded(page);
     } catch (navErr) {
       // Item 3c: one fresh-context retry, but ONLY for a session-death class of failure
       // (browser/page/context closed, crash, transient reset/timeout). A wall or a hard
@@ -1370,7 +1381,7 @@ export async function captureSite(opts: {
       try { if (!page.isClosed()) await page.close(); } catch { /* ignore */ }
       try { await context.close(); } catch { /* ignore */ }
       ({ context, page } = await newSession());
-      await navigateLoaded(page); // second failure propagates (no further retry)
+      entryResponse = await navigateLoaded(page); // second failure propagates (no further retry)
     }
 
     // Item 3b: bot/auth-wall fast-fail. A wall page would otherwise burn the full
@@ -1384,11 +1395,9 @@ export async function captureSite(opts: {
         nodes: document.querySelectorAll("*").length,
       }))
       .catch(() => null);
-    if (isBotWall(wallProbe)) {
-      throw new Error(
-        `auth/bot wall detected at ${opts.url} (${wallProbe!.nodes} nodes, wall text matched): capture aborted early`,
-      );
-    }
+    const entryStatus = entryResponse?.status() ?? null;
+    const wallDetected = isBotWall(wallProbe);
+    if (entryStatus === 403 || entryStatus === 429 || wallDetected) throw blockedAccessError(opts.url, entryStatus, wallDetected);
 
     // Stage 2: lazy-loader promotion. WP Rocket/lazysizes keep a 0-size placeholder in
     // `src` with the real URL in data attrs; autoScroll outruns their IntersectionObserver

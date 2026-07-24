@@ -10,6 +10,7 @@ export type ResolvedCloneOptions = CloneOptions & {
   components: boolean;
   motion: boolean;
   preview: boolean;
+  respectRobots: boolean;
 };
 
 export function resolveCloneMode(options: CloneOptions = {}): CloneMode {
@@ -54,6 +55,7 @@ export function resolveCloneOptions(options: CloneOptions = {}): ResolvedCloneOp
     interactions: options.interactions ?? true,
     components: options.components ?? true,
     motion: options.motion ?? true,
+    respectRobots: options.respectRobots ?? true,
     // Preview builds are the single-page product surface; multi-page exports can be
     // large, so previewing a site clone stays an explicit opt-in.
     preview: options.preview ?? mode === "single",

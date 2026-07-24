@@ -39,6 +39,7 @@ export type CloneOptions = {
   viewportConcurrency?: number;
   /** Service-level: bypass the cache on read AND write (does not affect output). */
   noCache?: boolean;
+  respectRobots?: boolean;
 
   /** @deprecated Use `mode: "multi"` instead. */
   multiPage?: boolean;

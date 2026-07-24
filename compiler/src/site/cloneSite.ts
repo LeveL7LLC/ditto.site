@@ -16,6 +16,7 @@ import { buildAssetGraph, type AssetGraph } from "../infer/assets.js";
 import { buildFontGraph, type FontGraph } from "../infer/fonts.js";
 import { extractTokens, type Tokens } from "../infer/tokens.js";
 import { crawlSite } from "../crawl/crawl.js";
+import { assertEntryAllowedByRobots } from "../crawl/robotsGuard.js";
 import { selectRoutes, applyConfirmation, type RoutePlan } from "../crawl/routeTemplates.js";
 import { structurallySimilar } from "./signature.js";
 import { generateSiteApp, routeToSegment, routeKey, type RouteArtifact } from "./generateSite.js";
@@ -26,6 +27,7 @@ import { writeJSON, readJSON, ensureDir, fileExists, writeText } from "../util/f
 import { seoInventoryToMarkdown } from "../generate/seo.js";
 import type { AppFramework } from "../generate/app.js";
 import { existsSync, readdirSync, rmSync, cpSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 export type CloneSiteOptions = {
   url: string;
@@ -40,6 +42,7 @@ export type CloneSiteOptions = {
   framework?: AppFramework; // output framework — Next.js App Router (default) or Vite React
   reflow?: boolean; // Reflow trade: flow all heights (ON by default, matching single-page; --no-reflow to disable)
   screenshots?: boolean; // capture per-viewport full-page screenshots (validation-only; default tied to `validate`)
+  respectRobots?: boolean; // default true
   captureConcurrency?: number; // routes captured in parallel (default 3; isolated browser each). 1 = sequential
   validationConcurrency?: number; // validation routes rendered/graded in parallel (default 2)
   viewportConcurrency?: number; // clone viewports rendered in parallel during validation (default 2)
@@ -88,6 +91,7 @@ export async function runCloneSite(opts: CloneSiteOptions): Promise<CloneSiteRes
   const captureConcurrency = Math.max(1, opts.captureConcurrency ?? 3);
   const validate = opts.validate === true;
   const screenshots = opts.screenshots ?? validate;
+  const respectRobots = opts.respectRobots ?? true;
   const runsDir = opts.runsDir ?? resolve(process.cwd(), "..", "runs");
   // --out: clean <outDir>/<siteName>/.clone working dir (shared with a prior single-page
   // clone) + app/ deliverable. Else the timestamped runs/site-<id>/<ts> layout.
@@ -104,8 +108,9 @@ export async function runCloneSite(opts: CloneSiteOptions): Promise<CloneSiteRes
     ?? (out && fileExists(join(runDir, "source", "capture", "capture-result.json")) ? join(runDir, "source") : null);
 
   // 1. Crawl + select.
+  if (respectRobots) await assertEntryAllowedByRobots(opts.url);
   log({ event: "crawl_start", url: opts.url });
-  const crawl = await crawlSite({ url: opts.url, maxDepth: opts.maxDepth, log });
+  const crawl = await crawlSite({ url: opts.url, maxDepth: opts.maxDepth, respectRobots, log });
   let plan = selectRoutes({ entryPath: crawl.entryPath, paths: crawl.paths, maxRoutes: opts.maxRoutes, maxCollectionInstances: opts.maxCollectionInstances });
   writeJSON(join(runDir, "crawl.json"), {
     entryUrl: crawl.entryUrl, origin: crawl.origin, entryPath: crawl.entryPath,
@@ -140,6 +145,7 @@ export async function runCloneSite(opts: CloneSiteOptions): Promise<CloneSiteRes
         log({ event: "route_captured", path: routePath, nodes: ir.doc.nodeCount, vps: viewports.length });
         return b;
       } catch (e) {
+        if (routePath === crawl.entryPath) throw e;
         log({ event: "route_capture_failed", path: routePath, error: String(e).slice(0, 200) });
         return null;
       } finally {
@@ -350,6 +356,7 @@ async function main(): Promise<void> {
   // Screenshots are only consumed by the (inline) validator, so tie them to it: default no-validate skips the
   // full-page screenshots too — the production fast path (no pixel work AND no second render pass).
   const screenshots = validate;
+  const respectRobots = !args.includes("--no-respect-robots");
   const interactions = !args.includes("--no-interactions");
   const components = !args.includes("--no-components");
   const stylingArg = args.find((a) => a.startsWith("--styling="))?.split("=")[1];
@@ -408,6 +415,7 @@ async function main(): Promise<void> {
     framework,
     reflow,
     screenshots,
+    respectRobots,
     outDir,
     tier,
     log: (e) => console.log(JSON.stringify(e)),
@@ -416,6 +424,6 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({ event: "done", runDir: res.runDir, app: res.appDir }));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((e) => { console.error(e); process.exit(1); });
 }
