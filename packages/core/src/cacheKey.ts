@@ -49,6 +49,7 @@ export function canonicalOptions(options: CloneOptions = {}): string {
     asyncVerify: !!resolved.asyncVerify,
     maxRoutes: resolved.maxRoutes ?? null,
     maxCollection: resolved.maxCollection ?? null,
+    experimentalContentHandoff: resolved.experimentalContentHandoff ?? null,
   };
   return JSON.stringify(norm);
 }

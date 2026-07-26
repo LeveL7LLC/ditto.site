@@ -15,6 +15,7 @@ const optionsShape = {
   captureConcurrency: z.number().int().positive().optional(),
   validationConcurrency: z.number().int().positive().optional(),
   viewportConcurrency: z.number().int().positive().optional(),
+  experimentalContentHandoff: z.literal("ion-cms-v1").optional(),
   multiPage: z.boolean().optional(),
   humanizeMode: z.enum(["tailwind", "css"]).optional(),
   viewports: z.array(z.number().int().positive()).optional(),
@@ -23,6 +24,24 @@ const optionsShape = {
   motion: z.boolean().optional(),
   noCache: z.boolean().optional(),
 };
+
+const cloneOptionsSchema = z.object(optionsShape).strict().superRefine((options, ctx) => {
+  const mode = options.mode ?? (options.multiPage ? "multi" : "single");
+  if (options.experimentalContentHandoff && mode !== "multi") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["experimentalContentHandoff"],
+      message: "experimentalContentHandoff is available only for multi-page clones",
+    });
+  }
+  if (options.experimentalContentHandoff && options.framework === "vite") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["experimentalContentHandoff"],
+      message: "experimentalContentHandoff currently requires the Next.js framework",
+    });
+  }
+});
 
 const json = (data: unknown, isError = false) => ({
   content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
@@ -45,7 +64,7 @@ export function createMcpServer(backend: Backend, opts?: { baseUrl?: string }): 
     "clone_website",
     {
       description: "Clone a website by URL. Returns { jobId, status } immediately — poll get_clone_status, then browse with list_clone_files / read_clone_files. Never returns file contents.",
-      inputSchema: { url: z.string().url(), options: z.object(optionsShape).optional() },
+      inputSchema: { url: z.string().url(), options: cloneOptionsSchema.optional() },
     },
     async ({ url, options }) => {
       if (!/^https?:\/\//i.test(url)) return json({ error: "url must be http(s)" }, true);

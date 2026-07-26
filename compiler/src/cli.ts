@@ -570,6 +570,13 @@ function parseProductFramework(args: string[]): ProductFramework {
   return args.includes("--vite") ? "vite" : "next";
 }
 
+function parseExperimentalContentHandoff(args: string[]): "ion-cms-v1" | undefined {
+  const raw = flagValue(args, "--experimental-content-handoff");
+  if (raw === undefined) return undefined;
+  if (raw === "ion-cms-v1") return raw;
+  throw new Error(`invalid --experimental-content-handoff=${raw}; expected "ion-cms-v1"`);
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const url = args.find((a) => !a.startsWith("--"));
@@ -580,6 +587,13 @@ async function main(): Promise<void> {
   const mode = parseProductMode(args);
   const styling = parseProductStyling(args);
   const framework = parseProductFramework(args);
+  const experimentalContentHandoff = parseExperimentalContentHandoff(args);
+  if (experimentalContentHandoff && mode !== "multi") {
+    throw new Error("--experimental-content-handoff is available only with --mode=multi");
+  }
+  if (experimentalContentHandoff && framework !== "next") {
+    throw new Error("--experimental-content-handoff currently requires --framework=next");
+  }
   // --serve installs deps + starts the dev server after cloning; --open also launches the browser.
   const open = hasAnyFlag(args, ["--open"]);
   const serve = open || hasAnyFlag(args, ["--serve"]);
@@ -635,6 +649,7 @@ async function main(): Promise<void> {
       captureConcurrency: concurrency ? parseInt(concurrency, 10) : undefined,
       validationConcurrency: validationConcurrency ? parseInt(validationConcurrency, 10) : undefined,
       viewportConcurrency: viewportConcurrency ? parseInt(viewportConcurrency, 10) : undefined,
+      experimentalContentHandoff,
       validate,
       interactions,
       components,

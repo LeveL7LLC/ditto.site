@@ -23,6 +23,7 @@ const OptionsSchema = z
     captureConcurrency: z.number().int().positive().optional(),
     validationConcurrency: z.number().int().positive().optional(),
     viewportConcurrency: z.number().int().positive().optional(),
+    experimentalContentHandoff: z.literal("ion-cms-v1").optional(),
 
     // Deprecated compatibility aliases and dev-only escape hatches.
     multiPage: z.boolean().optional(),
@@ -33,7 +34,24 @@ const OptionsSchema = z
     motion: z.boolean().optional(),
     noCache: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((options, ctx) => {
+    const mode = options.mode ?? (options.multiPage ? "multi" : "single");
+    if (options.experimentalContentHandoff && mode !== "multi") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["experimentalContentHandoff"],
+        message: "experimentalContentHandoff is available only for multi-page clones",
+      });
+    }
+    if (options.experimentalContentHandoff && options.framework === "vite") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["experimentalContentHandoff"],
+        message: "experimentalContentHandoff currently requires the Next.js framework",
+      });
+    }
+  });
 
 const CloneRequest = z.object({
   url: z.string().url(),

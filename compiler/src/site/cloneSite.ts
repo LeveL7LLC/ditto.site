@@ -28,6 +28,11 @@ import { seoInventoryToMarkdown } from "../generate/seo.js";
 import type { AppFramework } from "../generate/app.js";
 import { existsSync, readdirSync, rmSync, cpSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import {
+  buildContentHandoffBundle,
+  DITTO_CONTENT_BUNDLE_PATH,
+  type DittoContentBundleV1,
+} from "./contentHandoff.js";
 
 export type CloneSiteOptions = {
   url: string;
@@ -46,6 +51,7 @@ export type CloneSiteOptions = {
   captureConcurrency?: number; // routes captured in parallel (default 3; isolated browser each). 1 = sequential
   validationConcurrency?: number; // validation routes rendered/graded in parallel (default 2)
   viewportConcurrency?: number; // clone viewports rendered in parallel during validation (default 2)
+  experimentalContentHandoff?: "ion-cms-v1"; // private opt-in; absent preserves legacy output exactly
   outDir?: string; // clean <outDir>/<siteName>/{app,.clone} layout; reuses a prior single-page capture as the entry route
   reuseEntrySource?: string; // explicit: a prior single-page source/ dir to reuse as the entry route (skip its re-capture)
   tier?: string;
@@ -84,6 +90,23 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, i: number
   };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length || 1)) }, worker));
   return out;
+}
+
+/** Pure link policy. An empty CMS set is the legacy behavior; only successfully
+ * extracted routes from an explicit handoff preserve their individual href. */
+export function buildSiteLinkTargets(plan: RoutePlan, cmsRoutes: ReadonlySet<string> = new Set()): Map<string, string> {
+  const linkTargets = new Map<string, string>();
+  for (const route of plan.selected) linkTargets.set(route.path, routeToSegment(route.path).href);
+  for (const collection of plan.collections) {
+    const representativeHref = routeToSegment(collection.representative).href;
+    if (collection.listing) linkTargets.set(collection.listing, routeToSegment(collection.listing).href);
+    for (const instance of collection.instances) {
+      if (!linkTargets.has(instance)) {
+        linkTargets.set(instance, cmsRoutes.has(instance) ? routeToSegment(instance).href : representativeHref);
+      }
+    }
+  }
+  return linkTargets;
 }
 
 export async function runCloneSite(opts: CloneSiteOptions): Promise<CloneSiteResult> {
@@ -199,15 +222,27 @@ export async function runCloneSite(opts: CloneSiteOptions): Promise<CloneSiteRes
   // 3b. Capture any routes newly promoted by an exploded collection (bounded-parallel).
   await mapLimit(plan.selected.filter((r) => !built.has(r.path)), captureConcurrency, (r) => captureRoute(r.path, [...REQUIRED_VIEWPORTS]));
 
-  // 4. Build the link-target map: selected routes → themselves; collapsed collection
-  //    instances → their representative's href (so internal links resolve).
-  const linkTargets = new Map<string, string>();
-  for (const r of plan.selected) linkTargets.set(r.path, routeToSegment(r.path).href);
-  for (const c of plan.collections) {
-    const repHref = routeToSegment(c.representative).href;
-    if (c.listing) linkTargets.set(c.listing, routeToSegment(c.listing).href);
-    for (const inst of c.instances) if (!linkTargets.has(inst)) linkTargets.set(inst, repHref);
+  // Private, versioned integration path. The default remains null and therefore
+  // retains the legacy route rewriting and byte shape for all existing callers.
+  let contentBundle: DittoContentBundleV1 | null = null;
+  if (opts.experimentalContentHandoff === "ion-cms-v1") {
+    contentBundle = await buildContentHandoffBundle({ sourceUrl: opts.url, crawl, plan, log });
+    log({
+      event: "content_handoff_ready",
+      version: contentBundle.version,
+      families: contentBundle.families.length,
+      entries: contentBundle.coverage.cms,
+      unresolved: contentBundle.coverage.unresolved,
+    });
   }
+  const cmsRoutes = new Set(
+    contentBundle?.families.flatMap((family) => family.entries.map((entry) => entry.routePath)) ?? []
+  );
+
+  // 4. Build the link-target map: selected routes → themselves; collapsed collection
+  //    instances → their representative's href (legacy), except the explicitly
+  //    flagged CMS handoff routes, which preserve their individual path for Ion.
+  const linkTargets = buildSiteLinkTargets(plan, cmsRoutes);
 
   // 5. Generate the multi-route app from captured routes (in selected order).
   const routes: RouteArtifact[] = [];
@@ -221,6 +256,7 @@ export async function runCloneSite(opts: CloneSiteOptions): Promise<CloneSiteRes
   const chrome = entryArtifact ? detectSharedChrome(routes.map((r) => r.ir)) : { headerCount: 0, footerCount: 0 };
   if (chrome.headerCount || chrome.footerCount) log({ event: "shared_chrome", header: chrome.headerCount, footer: chrome.footerCount, sig: entryArtifact ? chromeSignatureId(entryArtifact.ir, chrome) : "" });
   const gen = generateSiteApp({ appDir, routes, linkTargets, origin, entryRoutePath: crawl.entryPath, chrome, components: opts.components, humanizeMode: opts.humanizeMode, framework: opts.framework, reflow: opts.reflow });
+  if (contentBundle) writeJSON(join(appDir, DITTO_CONTENT_BUNDLE_PATH), contentBundle);
   writeJSON(join(runDir, "generated", "extracted-components.json"), gen.extracted);
   writeJSON(join(runDir, "generated", "seo.json"), gen.seoInventory);
   writeText(join(runDir, "generated", "seo.md"), seoInventoryToMarkdown(gen.seoInventory));
@@ -235,6 +271,7 @@ export async function runCloneSite(opts: CloneSiteOptions): Promise<CloneSiteRes
     collections: plan.collections.map((c) => ({ template: c.template, instanceCount: c.instanceCount, representative: c.representative, listing: c.listing, confirmed: c.confirmed, instances: c.instances })),
     skipped: plan.skipped, assetsCopied: gen.assetsCopied, assetsMissing: gen.assetsMissing,
     components: gen.components,
+    ...(contentBundle ? { experimentalContentHandoff: "ion-cms-v1", contentBundle: DITTO_CONTENT_BUNDLE_PATH } : {}),
   });
   log({ event: "site_generated", routes: gen.routes.length, assetsCopied: gen.assetsCopied });
 
@@ -256,6 +293,8 @@ type ManifestForRegen = {
   humanizeMode?: "tailwind" | "css";
   framework?: AppFramework;
   reflow?: boolean;
+  experimentalContentHandoff?: "ion-cms-v1";
+  contentBundle?: string;
   routes: Array<{ routePath: string; href: string }>;
   collections: Array<{ representative: string; listing: string | null; instances: string[] }>;
 };
@@ -291,10 +330,21 @@ export async function regenerateSite(runDir: string, opts?: { tier?: string; val
   }
   const linkTargets = new Map<string, string>();
   for (const r of m.routes) linkTargets.set(r.routePath, r.href);
+  const savedBundlePath = m.experimentalContentHandoff === "ion-cms-v1"
+    ? join(appDir, m.contentBundle ?? DITTO_CONTENT_BUNDLE_PATH)
+    : null;
+  const savedBundle = savedBundlePath && fileExists(savedBundlePath)
+    ? readJSON<DittoContentBundleV1>(savedBundlePath)
+    : null;
+  const cmsRoutes = new Set(
+    savedBundle?.families.flatMap((family) => family.entries.map((entry) => entry.routePath)) ?? []
+  );
   for (const c of m.collections) {
     const repHref = routeToSegment(c.representative).href;
     if (c.listing) linkTargets.set(c.listing, routeToSegment(c.listing).href);
-    for (const inst of c.instances) if (!linkTargets.has(inst)) linkTargets.set(inst, repHref);
+    for (const inst of c.instances) {
+      if (!linkTargets.has(inst)) linkTargets.set(inst, cmsRoutes.has(inst) ? routeToSegment(inst).href : repHref);
+    }
   }
   const entryArtifact = routes.find((r) => r.routePath === m.entry) ?? routes[0];
   const chrome = entryArtifact ? detectSharedChrome(routes.map((r) => r.ir)) : { headerCount: 0, footerCount: 0 };
