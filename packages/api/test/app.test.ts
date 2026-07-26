@@ -122,6 +122,39 @@ test("POST /v1/clones validates the body", async () => {
       (await app.request("/v1/clones", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: "https://x.com", options: { bogus: 1 } }) })).status,
       400,
     );
+    assert.equal(
+      (await app.request("/v1/clones", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          url: "https://x.com",
+          options: { mode: "multi", experimentalContentHandoff: "wrong-version" },
+        }),
+      })).status,
+      400,
+    );
+    assert.equal(
+      (await app.request("/v1/clones", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          url: "https://x.com",
+          options: { mode: "single", experimentalContentHandoff: "ion-cms-v1" },
+        }),
+      })).status,
+      400,
+    );
+    assert.equal(
+      (await app.request("/v1/clones", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          url: "https://x.com",
+          options: { mode: "multi", framework: "vite", experimentalContentHandoff: "ion-cms-v1" },
+        }),
+      })).status,
+      400,
+    );
   } finally {
     store.clear();
   }
@@ -140,6 +173,19 @@ test("POST /v1/clones normalizes product options and legacy aliases", async () =
     const productQueued = await product.json();
     const productBody = await waitForResult(app, productQueued.jobId);
     assert.deepEqual(productBody.options, { mode: "multi", styling: "css", framework: "vite" });
+
+    const experimental = await app.request("/v1/clones", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        url: "https://example.com/",
+        options: { mode: "multi", experimentalContentHandoff: "ion-cms-v1" },
+      }),
+    });
+    assert.equal(experimental.status, 202);
+    const experimentalQueued = await experimental.json();
+    const experimentalBody = await waitForResult(app, experimentalQueued.jobId);
+    assert.equal(experimentalBody.options.experimentalContentHandoff, "ion-cms-v1");
 
     const legacy = await app.request("/v1/clones", {
       method: "POST",

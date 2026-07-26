@@ -16,6 +16,7 @@ export type {
   CloneMode,
   CloneOptions,
   CloneStyling,
+  ExperimentalContentHandoff,
   CollectedFile,
   FileMap,
   CaptureSanity,

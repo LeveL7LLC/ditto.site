@@ -112,6 +112,7 @@ export async function runCloneJob(input: RunCloneJobInput): Promise<CloneJobResu
         validationConcurrency: options.validationConcurrency,
         viewportConcurrency: options.viewportConcurrency,
         respectRobots: options.respectRobots,
+        experimentalContentHandoff: options.experimentalContentHandoff,
         screenshots: captureValidationArtifacts,
         log,
       });

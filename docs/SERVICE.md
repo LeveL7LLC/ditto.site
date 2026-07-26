@@ -140,6 +140,12 @@ bypasses the cache. Deprecated aliases (`multiPage`, `humanizeMode`) and dev-onl
 hatches are still accepted for compatibility, but are not part of the normal product surface.
 `Cache-Control: no-cache` is honored as an alias.
 
+The private Ion CMS integration is available only through the exact opt-in
+`experimentalContentHandoff: "ion-cms-v1"` on a multi-page request. It is not a
+normal product option and does not affect requests where the flag is absent. See
+[EXPERIMENTAL_ION_CMS_HANDOFF.md](EXPERIMENTAL_ION_CMS_HANDOFF.md) for its
+versioned artifact and importer contract.
+
 For fast production responses, keep `verify:false` on the delivery job. The service skips
 validation-only full-page screenshots in that mode. When `verify:true`, multi-page validation
 can render routes and viewports concurrently with `validationConcurrency` and

@@ -28,6 +28,16 @@ export function resolveCloneFramework(options: CloneOptions = {}): CloneFramewor
 /** Normalize the request-facing shape. Deprecated aliases are consumed but not
  * echoed, so REST/MCP results present the product-level option names. */
 export function normalizeCloneRequestOptions(options: CloneOptions = {}): CloneOptions {
+  const rawHandoff = (options as { experimentalContentHandoff?: unknown }).experimentalContentHandoff;
+  if (rawHandoff !== undefined && rawHandoff !== "ion-cms-v1") {
+    throw new Error('experimentalContentHandoff must be "ion-cms-v1"');
+  }
+  if (rawHandoff && resolveCloneMode(options) !== "multi") {
+    throw new Error("experimentalContentHandoff is available only for multi-page clones");
+  }
+  if (rawHandoff && resolveCloneFramework(options) !== "next") {
+    throw new Error("experimentalContentHandoff currently requires the Next.js framework");
+  }
   const normalized: CloneOptions = {
     ...options,
     mode: resolveCloneMode(options),

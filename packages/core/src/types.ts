@@ -10,6 +10,7 @@
 export type CloneMode = "single" | "multi";
 export type CloneStyling = "tailwind" | "css";
 export type CloneFramework = "next" | "vite";
+export type ExperimentalContentHandoff = "ion-cms-v1";
 
 /** Clone options accepted by the service/core boundary.
  *
@@ -37,6 +38,9 @@ export type CloneOptions = {
   captureConcurrency?: number;
   validationConcurrency?: number;
   viewportConcurrency?: number;
+  /** Private, explicitly versioned integration surface. Absent by default so
+   *  open-source/API consumers retain the legacy multi-page behavior. */
+  experimentalContentHandoff?: ExperimentalContentHandoff;
   /** Service-level: bypass the cache on read AND write (does not affect output). */
   noCache?: boolean;
   respectRobots?: boolean;

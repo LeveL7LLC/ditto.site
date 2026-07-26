@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { cacheKey, normalizeUrl, canonicalOptions } from "../src/cacheKey.js";
+import { normalizeCloneRequestOptions } from "../src/options.js";
 
 test("normalizeUrl: canonicalizes scheme/host/port/trailing-slash/fragment/query", () => {
   assert.equal(normalizeUrl("HTTPS://Example.com:443/foo/#frag"), "https://example.com/foo");
@@ -21,6 +22,11 @@ test("cacheKey: stable for equivalent input, varies by options + compilerVersion
   assert.notEqual(k1, cacheKey("https://x.com/", { mode: "single", styling: "tailwind" }, "0.2.0"), "version bump invalidates");
   assert.notEqual(k1, cacheKey("https://x.com/", { mode: "single", styling: "tailwind", verify: true }, "0.1.0"), "verify is part of the key");
   assert.notEqual(k1, cacheKey("https://x.com/", { mode: "single", styling: "tailwind", asyncVerify: true }, "0.1.0"), "asyncVerify is part of the key");
+  assert.notEqual(
+    cacheKey("https://x.com/", { mode: "multi" }, "0.1.0"),
+    cacheKey("https://x.com/", { mode: "multi", experimentalContentHandoff: "ion-cms-v1" }, "0.1.0"),
+    "experimental handoff is isolated from the legacy cache",
+  );
 
   // noCache is a request-time switch, not an output determinant — must not change the key.
   assert.equal(k1, cacheKey("https://x.com/", { mode: "single", styling: "tailwind", noCache: true }, "0.1.0"));
@@ -37,5 +43,29 @@ test("canonicalOptions: sorts viewports and is stable", () => {
   assert.equal(
     canonicalOptions({ viewports: [1920, 375, 768] }),
     canonicalOptions({ viewports: [375, 768, 1920] }),
+  );
+});
+
+test("experimental content handoff is explicit, versioned, and multi-only", () => {
+  assert.deepEqual(
+    normalizeCloneRequestOptions({ mode: "multi", experimentalContentHandoff: "ion-cms-v1" }),
+    {
+      mode: "multi",
+      styling: "tailwind",
+      framework: "next",
+      experimentalContentHandoff: "ion-cms-v1",
+    },
+  );
+  assert.throws(
+    () => normalizeCloneRequestOptions({ mode: "single", experimentalContentHandoff: "ion-cms-v1" }),
+    /multi-page/,
+  );
+  assert.throws(
+    () => normalizeCloneRequestOptions({ mode: "multi", framework: "vite", experimentalContentHandoff: "ion-cms-v1" }),
+    /Next\.js/,
+  );
+  assert.throws(
+    () => normalizeCloneRequestOptions({ mode: "multi", experimentalContentHandoff: "wrong" } as never),
+    /ion-cms-v1/,
   );
 });
